@@ -1,0 +1,556 @@
+---
+title: "Introduction to AB Testing with R"
+author: "Muhamad Risman"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    highlight: tango
+    theme: cosmo
+    toc: yes
+    toc_float:
+      collapsed: no
+    number_sections: yes
+    always_allow_html: yes
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+<style>
+body{
+text-align: justify}
+</style>
+
+
+# What is A/B Testing?
+
+AB testing is a framework to test whether one alternative strategy is better at producing a certain effect or achieving the goal. This test will be given into two similar groups and measuring the impact of the design.
+
+![](ab testing.JPG)
+
+AB testing or split test will be started by testing a new idea, running the experiment, statistically analyze the output seeing if the design is significantly different or not. After putting a decision on which strategy is better, the process of AB testing will continue by exploring and updating the new idea. The update here can be used to improve minor updates before taking the final decision.
+For example, you are running a website about adopting a cat. The first strategy is a homepage showing a cat. You want to execute a different strategy by adding a hat to the cat. With AB testing, we want to know if the alternative strategy, adding a hat to the cat, is a better strategy than a simple cat. One metric to see if an A strategy is better than its counterpart is the conversion rate. If someone visits your website and clicks the button to adopt the cat, the conversion rate adds up. The conversion rate has generally clicked the button divided by the number of people who visited the page. For this case, we need two conditions. The first one is control where your cat is without additional attributes, and the second one is a test; for this case, your additional hat is your test for this condition.
+
+To do AB testing, there are several variables to consider:
+
+1. Question: Will changing the homepage will result in more conversion rate?
+2. Hypothesis: Using the additional item will result in more conversion rate
+3. Dependent variable: interest to add up as a conversion rate by clicking the button
+4. Independent variable: homepage photo
+
+Convertion rate of a website is one of a metric for AB testing. Understanding Key Performance Index (KPI) for the business case is important as there are many factors that can be evaluated. Identyfing meaningful KPI is the key of AB testing since AB testing should run the experiment effectively to gain sufficient data.
+
+
+# Data Introduction
+
+For this article, we will use a mobile game data named Cookie Cats. This game was created by Tactile Entertainment, where the style of the game is connecting three tiles of the same colour and win the level. The game is filled with a lot of singing cats. Users can see the demo [here](https://www.youtube.com/watch?v=GaP5f0jVTWE) and see the raw data by clicking [here](https://www.kaggle.com/yufengsui/mobile-games-ab-testing).
+
+![](Cookie-cats.png)
+
+
+```{r message=FALSE, warning=FALSE}
+library(tidyverse)
+cookie_cats <- read_csv("cookie_cats.csv")
+glimpse(cookie_cats)
+```
+
+The data consists of 90,189 players during the experiment of AB testing with the following explanation for each attribute:
+
+* `userid`         : a unique number that identifies each player.
+* `version`        : whether the player was put in the control group (gate_30 - a gate at level 30) or the group with the moved gate (gate_40 - a gate at level 40).
+* `sum_gamerounds` : the number of game rounds played by the player during the first 14 days after install.
+* `retention_1`    : did the player come back and play 1 day after installing?
+* `retention_7`    : did the player come back and play 7 days after installing?
+
+During the progress of the game, players will encounter a gate that forces them to choose between wait a non-trivial amount of time or make an in-app purchase to progress. This event occurs for the purpose of giving players a break from playing the game and to increase and prolong the enjoyment of the game.
+
+![](gate.JPG)
+
+The Key Performance Index here will analyze the player retention for two different gate placing. The decision will answer if the gate is rightly placed to prolong user retention of the game. The different placing for gate in level 30 and 40 will be analyze to see the differences. The player will be randonly placed in either gate 30 or gate 40. Gate 30 here will be act as control group while gate 40 will be acts as test group. We will investigate the proportion of each group.
+
+```{r}
+prop.table(table(cookie_cats$version))*100
+```
+
+The proportion of the control and test group is roughly in the same proportion which is nice! Another thing to consider is checking if there is missing value for each variables.
+
+```{r}
+colSums(is.na(cookie_cats))
+```
+
+The missing value is not presented in the data. We can move to another part of the analyzing.
+
+# Analyzing Player Behaviour
+
+To see the effect of gate placement as the busines case, we will see the distribution of number of games played during the first week of playing game.
+
+
+```{r message=FALSE, warning=FALSE}
+library(plotly)
+
+fig <- cookie_cats %>%
+  plot_ly(
+    x = ~version,
+    y = ~sum_gamerounds,
+    split = ~version,
+    type = 'violin',
+    box = list(
+      visible = T
+    ),
+    meanline = list(
+      visible = T
+    )
+  ) 
+
+fig <- fig %>%
+  layout(
+    xaxis = list(
+      title = "Gate"
+    ),
+    yaxis = list(
+      title = "Sum gamerounds",
+      zeroline = F
+    )
+  )
+
+fig
+```
+
+From the picture above, we can see that there are many outlier presented in the data. The outlier make the distribution of the data skewed. For example there was a player who played the game for early week for more than 50,000 round in gate_30.
+For the cleaning we will remove the user who played with more than 40,000 in a week and once again see the distribution.
+
+```{r}
+
+cookie_cats_clean <- cookie_cats %>% 
+  filter(sum_gamerounds <= 40000)
+
+library(plotly)
+
+fig2 <- cookie_cats_clean %>%
+  plot_ly(
+    x = ~version,
+    y = ~sum_gamerounds,
+    split = ~version,
+    type = 'violin',
+    box = list(
+      visible = T
+    ),
+    meanline = list(
+      visible = T
+    )
+  ) 
+
+fig2 <- fig2 %>%
+  layout(
+    xaxis = list(
+      title = "Gate"
+    ),
+    yaxis = list(
+      title = "Sum gamerounds",
+      zeroline = F
+    )
+  )
+
+fig2
+```
+
+Although the distributin is still skewed but the plot is relatively sensible. Hence, we will keep this data. Next, we will investigate the number of player played specific number of rounds by counting them.
+
+```{r}
+number_of_games <- cookie_cats_clean %>%
+  count(sum_gamerounds)
+
+number_of_games
+```
+
+There was 3994 player or 4.4% of total registered player who did not play any round. This phenomenom occured with the following reasons:
+
+1. Player might prefer to play another game
+2. The genre of the game turned out to be different from the expectation
+3. The player only attracted to the icon of the game but had no time to play
+4. Many other reasons.
+
+We will tree to see the distribution of the first 100 rounds played by each user.
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(hrbrthemes)
+
+
+p <- number_of_games %>%
+  filter(sum_gamerounds <= 100) %>% 
+  ggplot( aes(x=sum_gamerounds, y=n)) +
+    geom_area(fill="#69b3a2", alpha=0.5) +
+    geom_line(color="#69b3a2") +
+  xlab("Number of rounds")+
+    ylab("Number of Player") +
+  ggtitle("Number of Player Played The First 100 Rounds")+
+    theme_ipsum()
+
+# Turn it interactive with ggplotly
+p <- ggplotly(p)
+p
+
+```
+
+The number of player who played more round was decreasing each round. This is understanable with following reason:
+
+1. Player did not fulfill the expectation of the game
+2. Player felt bored with the game
+3. Player felt the game was too challenging
+
+Those 3 reasons are a few possible reason. There are many possible reasons existed. 
+
+Despite the fact that the number of people played more round was decreasing, we can see that there was many player who played more rounds than the rest. It means that these player is hooked with the game.
+
+
+# Analyzing The Retention
+
+A mobile game needs to build player base that keep playing with their game. A metric indicating that a mobile game is succesfull can be analyzed to 1-day retention. 1-day retention is the condition where a player will comeback to play the game after 1 day installing it. The desired number for 1-day retention should be high as the basis of building large player base. We will calculate the percentage of the player who attracted with the game with the indication of 1-day retention:
+
+```{r}
+prop.table(table(cookie_cats_clean$retention_1))*100
+```
+
+44.5% player come back after installing the game for a day. The number is less than the majority of the player who decided to not play the game after 1 day. We can also see the number of 1-day retention for each group of gate.
+
+```{r message=FALSE, warning=FALSE}
+ratio_per_group1 <- cookie_cats_clean %>% 
+  group_by(version, retention_1) %>% 
+  summarize(count =n()) %>% 
+  mutate(percentage = round(count/sum(count)*100,2)) %>% 
+  ungroup() 
+
+ratio_per_group1
+
+```
+
+For both gate, the number of 1-day retention is similar around 44%. We can also see the retention for 7-day basis.
+
+7-day retention is condition where a player come back to play the game after 7 days installing. Let's see the proportion of the all gates.
+
+```{r}
+prop.table(table(cookie_cats$retention_7))*100
+```
+
+The retention numbers for 7 days after installing the game is quite far. Many player by the amount of 81% choose to quit the game. One of the cause of problem is player don't feel the excitement with the game than the first day they install the game or any additional reason. 
+
+```{r message=FALSE, warning=FALSE}
+ratio_per_group7 <- cookie_cats %>% 
+  group_by(version, retention_7) %>% 
+  summarize(count =n()) %>% 
+  mutate(percentage = round(count/sum(count)*100,2)) %>% 
+  ungroup() 
+
+ratio_per_group7
+```
+
+For both gate in 7-day retention, the number is similar. Most of the player choose to quit the game for several reasons.
+
+# Analyzing The Significant of The Differences
+
+The first thing to see the differences between two groups, we will analyze the distribution for each groups and see how far is the gap for both groups.
+
+## 1-Day Retention
+
+The percentage of returned player in a day for gate 30 is slight higher than for gate 40. The score is small since the difference is about 0.6%. To improve our confidence with the difference, we can use bootstrapping to improve our view how small this number affecting the future.
+
+First, we will split the data into two groups. User in control group (gate 30) and in the test group (gate 40) will be assigned to their respective group.
+
+```{r}
+cookie_cats_clean_30 <- cookie_cats_clean %>%
+  dplyr::filter(version == "gate_30")
+
+cookie_cats_clean_40 <- cookie_cats_clean %>%
+  dplyr::filter(version == "gate_40")
+```
+
+The bootstrapping procedure will replicate the data with replacement. To gain more confidence the iteration will be replicated to 10,000 sample.
+
+```{r}
+
+BOOT <- 10000
+new_data30 <- NULL 
+new_data40 <- NULL
+set.seed(9999)
+
+for(i in 1:BOOT)
+{
+   n30 <- length(cookie_cats_clean_30$retention_1)
+bootmarks30 <- cookie_cats_clean_30[sample(1:n30,replace=TRUE),]
+new_number30 <- sum(bootmarks30$retention_1 == 'TRUE')/n30
+
+new_data30 <- c(new_data30,new_number30) 
+} 
+
+for(i in 1:BOOT)
+{
+   n40 <- length(cookie_cats_clean_40$retention_1)
+bootmarks40 <- cookie_cats_clean_40[sample(1:n40,replace=TRUE),]
+new_number40 <- sum(bootmarks40$retention_1 == 'TRUE')/n40
+
+new_data40 <- c(new_data40,new_number40) 
+}
+```
+
+After that, we can see the distribution of two groups with `ggplot2` function.
+
+```{r message=FALSE, warning=FALSE}
+library(ggplot2)
+library(hrbrthemes)
+library(viridis)
+
+data_retention_1 <- data.frame(
+  gate = c( rep("Gate 30", length(new_data30)), rep("Gate 40", length(new_data40)) ),
+  value = c(new_data30, new_data40)
+)
+
+
+data_retention_1 %>%
+  ggplot( aes(x=as.numeric(value), fill=gate)) +
+    geom_density( color="#e9ecef", alpha=0.7) +
+    scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    xlab("1-Day Retention Rate")+
+  ggtitle("One Day Retention Rate Distribution")+
+    theme_ipsum() +
+    labs(fill="")
+
+```
+
+From the plot above, we can see the difference between the two groups. We can also see the distribution from each group by seeing the difference in percentage. To do this, we can make a new column consisting of the subtraction between the mean of gate 30 and gate 40 and taking its absolute value. 
+
+```{r}
+data_difference1 <- as.data.frame(cbind(new_data30, new_data40)) %>% 
+  mutate(diff1 = round(abs(new_data30 - new_data40)*100,2))
+
+head(data_difference1)
+
+```
+
+We can also use the same technique to see the distribution of the difference.
+
+```{r message=FALSE, warning=FALSE}
+data_difference1 %>%
+  ggplot( aes(x=diff1)) +
+    geom_density( color="#e9ecef", fill = "#c90076", alpha=0.7) +
+    scale_fill_manual(values="#8fce00") +
+    xlab("1-Day Retention Rate Diff")+
+  ggtitle("One Day Gap Retention Rate Distribution")+
+    theme_ipsum() +
+    labs(fill="")
+```
+
+From the plot above, the difference between control and test group lies between 0 - 2%. The highest difference between 0.5% until 0.75%. To sum up, let's see the probability of difference that is not 0%. We do this to see the effect of gate placement for each level.
+
+```{r}
+data_difference1 %>% 
+  count(diff1 == 0)
+```
+
+From the result above, the number of zero effect for gate placement is small compared to the non-zero percentage difference. The 10,000 replication with bootstrapping give additional information how large the difference is.
+
+## 7-Day Retention
+
+The 1-day retention analysis shows that the retention rate is higher when the gate is placed in the level 30. A question may arise "Are you sure the player have been reached the level 30 by just playing in one day?". This question is crucial since many player are not affected by level 30 gate after playing in one day. The next step, we have to consider 7-day retention as the player might reach the level 30 or the level 40. The placement of the gate have been given to the both groups. The early analysis shows that the gate 30 have more 7-day retention than gate 40.
+
+```{r}
+ratio_per_group7
+```
+
+The difference is wider than in 1-day retention by approximately 1.18%. Let's visualize the distribution of the data by using bootstraping.
+
+```{r}
+BOOT <- 10000
+new_data30_7 <- NULL 
+new_data40_7 <- NULL
+set.seed(9999)
+
+for(i in 1:BOOT)
+{
+   n30_7 <- length(cookie_cats_clean_30$retention_7)
+bootmarks30_7 <- cookie_cats_clean_30[sample(1:n30_7,replace=TRUE),]
+new_number30_7 <- sum(bootmarks30_7$retention_7 == 'TRUE')/n30_7
+
+new_data30_7 <- c(new_data30_7,new_number30_7) 
+} 
+
+for(i in 1:BOOT)
+{
+   n40_7 <- length(cookie_cats_clean_40$retention_7)
+bootmarks40_7 <- cookie_cats_clean_40[sample(1:n40_7,replace=TRUE),]
+new_number40_7 <- sum(bootmarks40_7$retention_7 == 'TRUE')/n40
+
+new_data40_7 <- c(new_data40_7,new_number40_7) 
+}
+```
+
+```{r message=FALSE, warning=FALSE}
+
+data_retention_7 <- data.frame(
+  gate = c( rep("Gate 30", length(new_data30_7)), rep("Gate 40", length(new_data40_7)) ),
+  value = c(new_data30_7, new_data40_7)
+)
+
+
+data_retention_7 %>%
+  ggplot( aes(x=as.numeric(value), fill=gate)) +
+    geom_density( color="#e9ecef", alpha=0.7) +
+    scale_fill_manual(values=c("#69b3a2", "#404080")) +
+    xlab("7-Day Retention Rate") +
+  ggtitle("Seven Days Retention Rate Distribution")+
+    theme_ipsum() +
+    labs(fill="")
+
+```
+
+The gap between the two groups is wider for 7-day retention. It shows that the retention rate for gate 30 is higher than in the gate 40. We also can see the percentage of the difference by calculating the gap between two groups.
+
+```{r}
+data_difference7 <- as.data.frame(cbind(new_data30_7, new_data40_7)) %>% 
+  mutate(diff1 = round(abs(new_data30_7 - new_data40_7)*100,2))
+
+head(data_difference7)
+```
+
+```{r message=FALSE, warning=FALSE}
+data_difference7 %>%
+  ggplot( aes(x=diff1)) +
+    geom_density( color="#a64d79", fill = "#c90076", alpha=0.7) +
+    scale_fill_manual(values="#8fce00") +
+    xlab("7-Day Retention Rate Diff")+
+  ggtitle("Seven Days Gap Retention Rate Distribution")+
+    theme_ipsum() +
+    labs(fill="")
+```
+
+The distribution of the 7-day retention rate gap is between 0.75% until 1%. It shows clear gap between the gate in level 30 and the gate in level 40.
+
+# AB Testing: 3 Main Reports 
+
+There are three things to be included in AB Testing. The signifcance of the difference between control and test group, confidence interval, and the statistical power of the experiment. The three things here is crucial how good the AB testing has been run and how we perceive new idea in the future.
+
+## The Significance Effect Between Control and Test Group
+
+We have analyzed the gap between control and test group earlier by seeing the distribution. To gain more confidence how sure the gap is, we will use statistical test to see if test group is better than the control group or not. To do this, we will use chi square test with the threshold 0.05. The desired value for both 1-day retention rate and 7-day retention rate should be lower than 0.05. The hyptohesis for the significance test is describe as follow:
+
+Ho: There is no significance different between control and test group
+H1: There is a significance different between control and test group
+
+Chi-squared Test for 1-day retention rate is written as follow:
+
+```{r}
+
+chi_square1 <-  table(cookie_cats_clean$version, cookie_cats_clean$retention_1)
+
+chisq.test(chi_square1)
+
+```
+
+While the Chi-squared test for 7-day retention rate is calculated as follow:
+
+```{r}
+
+chi_square7 <-  table(cookie_cats_clean$version, cookie_cats_clean$retention_7)
+
+chisq.test(chi_square7)
+
+```
+
+
+From the two results above, the desired p-value happens in the 7-day retention rate while in the 1-day retention the p-value is higher than 0.05. The interpretation for the p-value in 1-day retention is the difference in control and test group is not significane at a 5% significane level. The reason behind the insignificane effect of this test is player might not reach the level 30 by playing in 1 day. If the player have not reached the level 30, they will not feel the effect of the gate placement. The retention rate in 7 days is significane at a 5% significane level. It shows that the retention rate in 7 days for gate 30 and gate 40 is significance at a 5% significance level.
+
+## Confidence Interval
+
+We have known the gap between control and test group by simply subtracting one value from another. For example, in 1-day retention rate the difference between the two groups is 44.82% - 44.23% = 0.59% while in the 7-day retention rate the difference is 19.02% - 18.20% = 1.82%. By using single number for each condition, we can also calculate the confidence interval. Confidence interval will give more information about the range of the effect of the variant which is the test group.
+
+```{r, out.width= "50%"}
+library(knitr)
+
+include_graphics("confidence_interval.jpg")
+```
+
+The explanation of the notaion above is p is the probability for the control and test/variant group. Control is the gate placement in gate 30 while variant is the gate placement in the level 40. Here, we will use the retention rate that we have gain earlier. X and N is the number of observed variable and population. Xv is the notation of population of the variant group, Xc is the notation of population of the control group. m is the representation of the magnitude of the confidence interval. The magnitude here will be used to define the range of the confidence interval. The d head and p head is the representation of predicted value respectively. We will use 1.96 as the convertion score for 95% confidence interval.
+
+```{r}
+d <- 0.4423 - 0.4482
+
+p_pool <- (20034 + 20119)/(24665 + 20034 + 25370 + 20119)
+
+se_pool <- sqrt(p_pool * (1 - p_pool) * (1/(24665 + 20034) + 1/ (25370 + 20119)))
+
+m <- 1.96 * se_pool
+
+ci_retention1_lower <- d - m
+ci_retention1_upper <- d + m
+
+ci_retention1_lower*100
+ci_retention1_upper*100
+```
+
+We got confidence interval between -1.23% until  0.05%. This range shows 95% of the time the new variant which is the placement of gate 40 will add the retention rate between -1.23% until 0.05%. We see here the point 0% is between the range, hence it is not worth into production by only seeing the retention rate in one day. There might be no effect on the experiment.
+
+We can do the same calculation with 7-day retention rate.
+
+```{r}
+d7 <- 18.20 - 19.02
+
+p_pool7 <- (8502 + 8279)/(36198 + 8502 + 37210	+ 8279)
+
+se_pool7 <- sqrt(p_pool7 * (1 - p_pool7) * (1/(36198 + 8502) + 1/(37210	+ 8279)))
+
+m7 <- 1.96 * se_pool7
+
+ci_retention1_lower7 <- d7 - m7
+ci_retention1_upper7 <- d7 + m7
+
+ci_retention1_lower7
+ci_retention1_upper7
+```
+
+
+In the 7-day retention rate, the confidence interval shows we expect the placement in gate 40 95% of the time will drop the retention rate with the range -0.825% until -0.814%.
+
+## Statistical Power of The Experiment
+
+Statistical power is the probability of the experiment of detecting a "true" effect when the effect is actually exist. To calculate the statistical power of one experiment, we can use power analysis with the following formula:
+
+```{r, out.width= "50%"}
+include_graphics("power_analysis.jpg")
+```
+
+
+d is the notation how large the improvement we consider meaningful in the experiment. Suppose for the retention rate, we will take focus on 1% change improvement for different gate and confidence is 95%. We have seen the effect in 1-day retention shows insignificant effect between the gate placement. Here we will focus on the 7-day retention rate. The calculation to see the power analysis will proceed as follow
+
+```{r}
+theta <- sqrt(0.1902*(1-0.1902))
+
+z <- (sqrt(min(24665 + 20034, 25370 + 20119)) * 0.01)/(2 * theta) - 1.96
+
+pnorm(z)
+```
+
+The power of the experiment is 76%. The interpretation for this number is the likelihood of the experiment to be able to detect a non-zero effect, here is the placement gate, if the effect is truly exist is 76%. As the rule of thumb of good experiment is 80%, our calculation shows that the experiment is strong enough to detect the effect of gate placement after 7 days of playing the game.
+
+# Conclusion
+
+There is a significant difference between the placement in gate 30 and gate 40 and to see the retention rate, we need to wait for 7 Days as the player will not reach gate 30 for playing in one day. The recommendation for the business is If we want to keep the retention higher, the gate should be placed in level 30 and not moving it to level 40.
+
+The Function of the gate placement is to increase the engagement of the player. If the gate is placed earlier, there is an indication that early gate placement will prolong the engagement of the game to the player. The more level the gate is, the more obstacle that the player will face. The player will get less enjoyment over activity that is taken continuosly. The player might get bored with continous activity of the game, hence giving break by puting the gate earlier will increase the chance of player to play again in the next time.
+
+
+# Reference
+
+https://stats.idre.ucla.edu/other/mult-pkg/seminars/intro-power/
+
+https://medium.com/bukalapak-data/3-things-to-report-in-an-a-b-test-analysis-dd00fa28a97d
+
+Cohen, J. (1988).  Statistical Power Analysis for the Behavioral Sciences, Second Edition.  Hillsdale, New Jersey:  Lawrence Erlbaum Associates.
+
+
+
+
